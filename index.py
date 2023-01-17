@@ -2,8 +2,24 @@ from datetime import datetime
 import xlwings as xw
 import pandas as pd
 import os
+import json
 
-def read_excel():
+def checkCondition(df, i, sum_col, strike_col):
+    strikes = []
+    
+    if(i > 0 and df[sum_col][i-1] > 0):                             # former is positive
+        if(df[sum_col][i] < 0):                                     # self is negative
+            if(i < df.index.stop and df[sum_col][i+1] < 0):         # next is also negative
+                strikes.append(df[strike_col][i])
+    elif(i == 0):
+        if(df[sum_col][i] < 0):                                     # self is negative
+            if(i < df.index.stop and df[sum_col][i+1] < 0):         # next is also negative
+                strikes.append(df[strike_col][i])
+    
+    return strikes
+
+# ## Creating last data file
+def start():
     wb = xw.Book('Stocks Spread Calculation.xlsx')
     sheet = wb.sheets['MasterSheet']
 
@@ -16,39 +32,37 @@ def read_excel():
         col_values[col_key] = values
     
     df = pd.DataFrame(col_values)
-    df.to_csv('last_data.csv', index=False)
-    if(not os.path.exists('last_data.csv')):
-        print('[STATUS]: Saving data.')
-    else:
-        print('[STATUS]: Resaving data.')
     
-    return df
-
-# ## Creating last data file
-def start():
-    if(not os.path.exists('last_data.csv') or os.path.getsize('last_data.csv') == 0 ):
-        print('[STATUS]: No previous records were found.')
-        read_excel()
-    else:
-        print('[STATUS]: Previous record found.')
+    try:
+        with open('output.txt', 'r') as f:
+            # Read all the lines of the file
+            lines = f.readlines()
+            # Get the last line
+            last_line = lines[-1]
+            print('[STATUS]: Previous record found.')    
+            file_strikes = json.loads(last_line)
+    except:
+        file_strikes = None
+        print('[STATUS]: No previous records were found.')    
         
-        # ## Creating needed dataframes
-        df = pd.read_csv('last_data.csv')
-        df_excel = read_excel()
+    strikes = {'1':[], '2':[], '3':[], '4':[]}
 
-
-        non_matching_indexes = df_excel[~df_excel[['Sum Bid 1', 'Sum Bid 2', 'Sum Bid 3', 'Sum Bid 4']].apply(tuple,1).isin(df[['Sum Bid 1', 'Sum Bid 2', 'Sum Bid 3', 'Sum Bid 4']].apply(tuple,1))].index
-        if(len(non_matching_indexes.to_list()) > 0):
-            print('[STATUS]: Changed rows found.')
-            export_df = df_excel[~df_excel[['Sum Bid 1', 'Sum Bid 2', 'Sum Bid 3', 'Sum Bid 4']].apply(tuple,1).isin(df[['Sum Bid 1', 'Sum Bid 2', 'Sum Bid 3', 'Sum Bid 4']].apply(tuple,1))]
-            export_df = export_df.copy()
-            export_df['Time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for i in df.index:
+        for j in range(4):
+            col_strikes = checkCondition(df, i, 'Sum Bid '+str(j+1), 'Strike '+str(j+1))
             
-            if(not os.path.exists('output.txt')):
-                with open('output.txt', 'w') as file:
-                    file.write('')
+            if len(col_strikes) > 0:
+                strikes[str(j+1)].append(col_strikes)
 
-            export_df.to_csv('output.txt', sep=',', index=False, header=os.path.getsize('output.txt')==0, mode='a')
-            print('[STATUS]: Record added to output.txt')
-        else:
-            print('[STATUS]: No data has changed.')
+    for key in strikes.keys():
+        strikes[key] = [int(i[0]) for i in strikes[key]]
+        
+
+    if(strikes != file_strikes):
+        print('[STATUS]: Change found.')
+        with open('output.txt', 'a') as file:
+            file.write(json.dumps(strikes))
+            file.write('\n')
+            print('[STATUS]: Record written to file.')    
+    else:
+        print('[STATUS]: No change found.')
